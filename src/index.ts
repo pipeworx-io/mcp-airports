@@ -1,12 +1,3 @@
-/**
- * Airports MCP — wraps AirportGap API (free, no auth required)
- *
- * Tools:
- * - search_airports: search airports by name, city, or country
- * - get_airport: look up a single airport by IATA code
- * - calculate_distance: calculate distance between two airports
- */
-
 interface McpToolDefinition {
   name: string;
   description: string;
@@ -21,6 +12,16 @@ interface McpToolExport {
   tools: McpToolDefinition[];
   callTool: (name: string, args: Record<string, unknown>) => Promise<unknown>;
 }
+
+/**
+ * Airports MCP — wraps AirportGap API (free, no auth required)
+ *
+ * Tools:
+ * - search_airports: search airports by name, city, or country
+ * - get_airport: look up a single airport by IATA code
+ * - calculate_distance: calculate distance between two airports
+ */
+
 
 const BASE_URL = 'https://airportgap.com/api/airports';
 

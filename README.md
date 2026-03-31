@@ -1,14 +1,13 @@
-# @pipeworx/mcp-airports
+# mcp-airports
 
-MCP server for airport data — search airports, get details by IATA code, and calculate distances. Powered by the [AirportGap API](https://airportgap.com/) (free, no auth required).
+Airports MCP — wraps AirportGap API (free, no auth required)
+
+Part of the [Pipeworx](https://pipeworx.io) open MCP gateway.
 
 ## Tools
 
 | Tool | Description |
 |------|-------------|
-| `search_airports` | Search airports by name, city, or country (up to 30 per page) |
-| `get_airport` | Get details for an airport by IATA code |
-| `calculate_distance` | Calculate great-circle distance between two airports |
 
 ## Quick Start
 
@@ -24,7 +23,7 @@ Add to your MCP client config:
 }
 ```
 
-Or run via CLI:
+Or use the CLI:
 
 ```bash
 npx pipeworx use airports

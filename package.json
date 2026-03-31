@@ -1,15 +1,19 @@
 {
   "name": "@pipeworx/mcp-airports",
   "version": "0.1.0",
+  "description": "Airports MCP — wraps AirportGap API (free, no auth required)",
   "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "keywords": ["mcp", "mcp-server", "model-context-protocol", "pipeworx", "airports"],
   "license": "MIT",
-  "keywords": [
-    "mcp",
-    "mcp-server",
-    "model-context-protocol",
-    "pipeworx",
-    "airports"
-  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pipeworx-io/mcp-airports"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
   "devDependencies": {
     "typescript": "^5.7.0"
   }
