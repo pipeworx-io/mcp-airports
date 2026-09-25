@@ -1,6 +1,6 @@
 {
   "name": "@pipeworx/mcp-airports",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Airports MCP — wraps AirportGap API (free, no auth required)",
   "type": "module",
   "main": "src/index.ts",
@@ -26,7 +26,7 @@
     "@cloudflare/workers-types": "^4.20260405.1"
   },
   "pipeworx": {
-    "sourceHash": "v1-a9e71fbcc7c598e4d33ed5885c6acb3c217823dbd12d646395e01124d26d5123",
-    "sourceCommit": "60f04b68c347e970c6be94a53439d1364061fc06"
+    "sourceHash": "v1-1bbb25a4fe458419062a3be41db18ca19dc2960e5eb9e3e3ab89b416c8fda38a",
+    "sourceCommit": "dca20ba6e13a9aa1c9f2918fc2ddaffe4cc30e5c"
   }
 }
