@@ -671,14 +671,39 @@ function collapse(s: string): string {
   return s.replace(/\s+/g, ' ').trim();
 }
 /**
- * Airports MCP — wraps AirportGap API (free, no auth required)
+ * Airports MCP — wraps AirportGap API (free, no auth required), plus a D1
+ * copy of the OurAirports bulk dataset (fleet #2977, mcps/airports/
+ * ourairports-store.ts) covering every airfield OurAirports tracks, not just
+ * AirportGap's IATA subset.
  *
- * Tools:
+ * AirportGap-backed tools (live upstream fetch):
  * - search_airports: search airports by name, city, or country
  * - get_airport: look up a single airport by IATA code
  * - calculate_distance: calculate distance between two airports
+ *
+ * OurAirports-backed tools (D1 `_d1`, public domain, see ourairports-store.ts):
+ * - ourairports_lookup: look up ANY airfield by ident/ICAO/IATA/GPS code
+ *   (~86k rows, incl. ICAO-only idents, heliports, seaplane bases, closed fields)
+ * - airport_runways: per-runway length/width/surface/lighting/heading
+ * - airport_frequencies: radio frequencies (ATIS/TWR/GND/...)
+ * - airport_navaids: navaids (NDB/VOR/DME/...) associated with an airfield
+ * - ourairports_search: name/municipality/ident substring search, paginated
  */
 
+import {
+  clampLimit,
+  frequenciesForIdent,
+  getMeta,
+  lookupAirport,
+  navaidsForIdent,
+  normCode,
+  requireDb,
+  runwaysForIdent,
+  searchAirports as oaSearchAirports,
+  shapeAirport as shapeOaAirport,
+  SOURCE as OA_SOURCE,
+  type D1Like,
+} from './ourairports-store.js';
 
 // Bound every fetch() in this pack to a fixed timeout — an upstream that
 // degrades without erroring would otherwise hold the Worker in `await fetch()`
@@ -808,6 +833,75 @@ const tools: McpToolExport['tools'] = [
       required: ['from', 'to'],
     },
   },
+  {
+    name: 'ourairports_lookup',
+    description:
+      'Look up ANY airfield in the OurAirports bulk dataset (~86,000 rows: every ICAO/IATA/local-code airport, heliport, seaplane base and balloonport OurAirports tracks, including fields with no IATA code at all). Pass ANY of: an ICAO code ("KJFK", "EGLL"), an IATA code ("JFK"), a GPS code, or OurAirports\' own local/national ident (e.g. a US local code like "00A", or a non-US ident like "AT-0001"). Returns name, type (large_airport/medium_airport/small_airport/heliport/seaplane_base/balloonport/closed), coordinates, elevation, country/region, and whether it has scheduled airline service. This is the superset of get_airport\'s AirportGap data -- use this for any code AirportGap does not recognize, or for a heliport/seaplane base/ICAO-only field get_airport cannot see at all. An unrecognized code is refused with a clear error, never an empty success.',
+    summary: 'Look up any of ~86k OurAirports airfields by ICAO/IATA/GPS/local code.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        code: { type: 'string', description: 'ICAO code ("KJFK"), IATA code ("JFK"), GPS code, or OurAirports local ident (e.g. "00A").' },
+      },
+      required: ['code'],
+    },
+  },
+  {
+    name: 'airport_runways',
+    description:
+      'Runway details for one airfield from the OurAirports dataset: for each runway, length and width in feet, surface type, whether it is lighted, whether it is closed, and both ends\' ident/coordinates/elevation/heading/displaced threshold. Pass any code ourairports_lookup accepts (ICAO, IATA, GPS or local ident). An airfield with no fixed-wing runways on file (e.g. most heliports) returns an empty runways array with found:true, not an error. An unrecognized airfield code is refused with a clear error, never an empty success.',
+    summary: 'Per-runway length/width/surface/lighting/heading for one airfield.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        code: { type: 'string', description: 'ICAO/IATA/GPS/local code, e.g. "KJFK" or "JFK".' },
+      },
+      required: ['code'],
+    },
+  },
+  {
+    name: 'airport_frequencies',
+    description:
+      'Radio frequencies for one airfield from the OurAirports dataset: type (ATIS/TWR/GND/CLD/DIR/APP/DEP/CTAF/UNICOM/...), a human description, and the frequency in MHz. Pass any code ourairports_lookup accepts. An airfield with no frequencies on file returns an empty list with found:true, not an error. An unrecognized airfield code is refused with a clear error, never an empty success.',
+    summary: 'Radio frequencies (ATIS/TWR/GND/...) for one airfield.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        code: { type: 'string', description: 'ICAO/IATA/GPS/local code, e.g. "EGLL" or "LHR".' },
+      },
+      required: ['code'],
+    },
+  },
+  {
+    name: 'airport_navaids',
+    description:
+      'Navigational aids (NDB, VOR, DME, VOR-DME, VORTAC, TACAN, ...) associated with one airfield from the OurAirports dataset: ident, name, type, frequency in kHz, coordinates, elevation, DME channel and power. Pass any code ourairports_lookup accepts. Most airfields have none on file (navaids are sparse relative to airports) -- that returns an empty list with found:true, not an error. An unrecognized airfield code is refused with a clear error, never an empty success.',
+    summary: 'Navaids (NDB/VOR/DME/...) associated with one airfield.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        code: { type: 'string', description: 'ICAO/IATA/GPS/local code, e.g. "KORD".' },
+      },
+      required: ['code'],
+    },
+  },
+  {
+    name: 'ourairports_search',
+    description:
+      'Search the OurAirports dataset (~86,000 airfields) by a text match against name, municipality or ident, optionally narrowed by ISO country code (e.g. "US", "GB") and/or airfield type ("large_airport", "medium_airport", "small_airport", "heliport", "seaplane_base", "balloonport", "closed"). Results default to airfields with scheduled airline service first. Use this to find airfields by partial name/city when you do not already have a code -- ourairports_lookup requires an exact code. Rows beyond `limit` are reported via truncated/total_matching rather than silently dropped -- narrow the query or page with limit/offset to see the rest. A query that matches nothing returns found:false with an explanation, never a silent empty array mistaken for "no such place".',
+    summary: 'Text search over ~86k OurAirports airfields by name/municipality/ident.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Text to match against name, municipality or ident, e.g. "Heathrow" or "Bensalem".' },
+        country: { type: 'string', description: 'Optional: ISO 3166-1 alpha-2 country code, e.g. "US", "GB", "FR".' },
+        type: { type: 'string', description: 'Optional: airfield type, e.g. "heliport", "small_airport", "large_airport".' },
+        limit: { type: 'number', description: 'Max rows to return, 1-100. Default 20. A truncated response carries truncated:true and total_matching.' },
+        offset: { type: 'number', description: 'Pagination offset. Default 0.' },
+      },
+      required: [],
+    },
+  },
 ];
 
 function reqStr(v: unknown, field: string, example: string): string {
@@ -828,9 +922,127 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         reqStr(args.from, 'from', '"JFK"'),
         reqStr(args.to, 'to', '"LHR"'),
       );
+    case 'ourairports_lookup':
+      return ourairportsLookupTool(requireDb(args._d1), args);
+    case 'airport_runways':
+      return airportRunwaysTool(requireDb(args._d1), args);
+    case 'airport_frequencies':
+      return airportFrequenciesTool(requireDb(args._d1), args);
+    case 'airport_navaids':
+      return airportNavaidsTool(requireDb(args._d1), args);
+    case 'ourairports_search':
+      return ourairportsSearchTool(requireDb(args._d1), args);
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
+}
+
+// ── OurAirports (D1-backed) tool implementations ───────────────────────────
+
+async function resolveOrThrow(db: D1Like, rawCode: unknown) {
+  const code = normCode(rawCode);
+  if (!code) {
+    throw new Error('Required argument "code" is missing or empty. Pass an ICAO, IATA, GPS or local airfield code, e.g. "KJFK" or "JFK".');
+  }
+  const airport = await lookupAirport(db, code);
+  if (!airport) {
+    throw new Error(
+      `${JSON.stringify(code)} is not a recognized airfield code in the OurAirports dataset (~86,000 rows: ICAO, IATA, heliports, seaplane bases, closed fields). Check for a typo, or try ourairports_search to find it by name/city if you do not have the exact code.`,
+    );
+  }
+  return { code, airport };
+}
+
+async function ourairportsLookupTool(db: D1Like, args: Record<string, unknown>) {
+  const { airport } = await resolveOrThrow(db, args.code);
+  const meta = await getMeta(db);
+  return { found: true, ...shapeOaAirport(airport), ...OA_SOURCE, data_as_of: meta.loaded_at };
+}
+
+async function airportRunwaysTool(db: D1Like, args: Record<string, unknown>) {
+  const { airport } = await resolveOrThrow(db, args.code);
+  const meta = await getMeta(db);
+  const runways = await runwaysForIdent(db, airport.ident);
+  return {
+    found: true,
+    ident: airport.ident,
+    name: airport.name,
+    returned: runways.length,
+    runways,
+    ...(runways.length === 0 ? { note: 'No runways on file for this airfield (common for heliports and some seaplane bases).' } : {}),
+    ...OA_SOURCE,
+    data_as_of: meta.loaded_at,
+  };
+}
+
+async function airportFrequenciesTool(db: D1Like, args: Record<string, unknown>) {
+  const { airport } = await resolveOrThrow(db, args.code);
+  const meta = await getMeta(db);
+  const frequencies = await frequenciesForIdent(db, airport.ident);
+  return {
+    found: true,
+    ident: airport.ident,
+    name: airport.name,
+    returned: frequencies.length,
+    frequencies,
+    ...(frequencies.length === 0 ? { note: 'No radio frequencies on file for this airfield.' } : {}),
+    ...OA_SOURCE,
+    data_as_of: meta.loaded_at,
+  };
+}
+
+async function airportNavaidsTool(db: D1Like, args: Record<string, unknown>) {
+  const { airport } = await resolveOrThrow(db, args.code);
+  const meta = await getMeta(db);
+  const navaids = await navaidsForIdent(db, airport.ident);
+  return {
+    found: true,
+    ident: airport.ident,
+    name: airport.name,
+    returned: navaids.length,
+    navaids,
+    ...(navaids.length === 0 ? { note: 'No navaids on file associated with this airfield (most airfields have none).' } : {}),
+    ...OA_SOURCE,
+    data_as_of: meta.loaded_at,
+  };
+}
+
+async function ourairportsSearchTool(db: D1Like, args: Record<string, unknown>) {
+  const meta = await getMeta(db);
+  const query = typeof args.query === 'string' && args.query.trim() ? args.query.trim() : null;
+  const country = typeof args.country === 'string' && args.country.trim() ? args.country.trim().toUpperCase() : null;
+  const type = typeof args.type === 'string' && args.type.trim() ? args.type.trim().toLowerCase() : null;
+  if (!query && !country && !type) {
+    throw new Error('ourairports_search needs at least one of query, country or type -- a call with none would scan all ~86,000 rows unscoped.');
+  }
+  const limit = clampLimit(args.limit);
+  const offset = Math.max(0, Math.floor(Number(args.offset) || 0));
+  const { rows, total_matching, truncated } = await oaSearchAirports(db, { query, country, type, limit, offset });
+  if (!rows.length) {
+    return {
+      found: false,
+      reason: 'no_match',
+      query,
+      country,
+      type,
+      message: `No airfields matched query=${JSON.stringify(query)}${country ? ` country=${country}` : ''}${type ? ` type=${type}` : ''} in the OurAirports dataset. Try a shorter/looser query, or drop the country/type filter.`,
+      ...OA_SOURCE,
+      data_as_of: meta.loaded_at,
+    };
+  }
+  return {
+    found: true,
+    query,
+    country,
+    type,
+    returned: rows.length,
+    total_matching,
+    truncated,
+    ...(truncated ? { hint: 'More airfields match than were returned. Narrow with country/type, or page with limit/offset.' } : {}),
+    airports: rows,
+    ...OA_SOURCE,
+    data_as_of: meta.loaded_at,
+  };
 }
 
 // City / common-name → primary IATA mapping. Production analytics showed
