@@ -1,6 +1,6 @@
 {
   "name": "@pipeworx/mcp-airports",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Airports MCP — wraps AirportGap API (free, no auth required), plus a D1 copy of the OurAirports bulk dataset (fleet #2977, mcps/airports/ ourairports-store.ts) covering every airfield OurAirports tracks, not just AirportGap's IATA subset.",
   "type": "module",
   "main": "src/index.ts",
@@ -26,7 +26,7 @@
     "@cloudflare/workers-types": "^4.20260405.1"
   },
   "pipeworx": {
-    "sourceHash": "v1-2c0f5745e1b577521f7a9d3519b12cf9ad25f7a9aedeefd35478753181ac848e",
-    "sourceCommit": "351c40908821cfecc9bb2f5849d87bbfdbb26d75"
+    "sourceHash": "v1-bf7a11938681b8437fa51fd237722c567e11d755330966b0f1a6950792b44279",
+    "sourceCommit": "71f5325b13bb0ea0de2f0f7207885962ec91a484"
   }
 }
